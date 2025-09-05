@@ -1,0 +1,16 @@
+name: swat_app
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - geopandas
+  - xarray
+  - netcdf4
+  - dask
+  - pandas
+  - numpy
+  - shapely
+  - pip
+  - pip:
+    - streamlit
