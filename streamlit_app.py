@@ -160,6 +160,9 @@ def main():
                             with open(shp_path, "wb") as f:
                                 f.write(shapefile_upload.getbuffer())
                             shape_file = gpd.read_file(shp_path)
+                            if shape_file.crs is not None and shape_file.crs.to_epsg() != 4326:
+                                st.warning(f"Reprojecting shapefile from {shape_file.crs} to EPSG:4326 for compatibility.")
+                                shape_file = shape_file.to_crs(epsg=4326)
                         else:
                             shp_dir = os.path.join(temp_dir, "shp")
                             os.makedirs(shp_dir, exist_ok=True)
