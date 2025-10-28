@@ -58,6 +58,9 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
         ds = xr.open_dataset(data_path, chunks={"time": 365, "lat": 50, "lon": 50})
         var_name = list(ds.data_vars)[0]
         data_array = ds[var_name]
+        st.write("Shapefile bounds:", shape_file.total_bounds)
+        st.write("Dataset lat range:", float(data_array.lat.min()), "-", float(data_array.lat.max()))
+        st.write("Dataset lon range:", float(data_array.lon.min()), "-", float(data_array.lon.max()))
 
         # Bounds
         bounds = shape_file.bounds
