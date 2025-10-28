@@ -8,3 +8,5 @@ pyogrio
 shapely
 matplotlib
 dask
+scipy
+h5netcdf
