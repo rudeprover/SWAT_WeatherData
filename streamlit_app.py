@@ -18,7 +18,7 @@ warnings.filterwarnings("ignore")
 # ------------------------------
 
 def build_human_metadata(ds, var_name):
-    """Create plain-language metadata summary."""
+    """Generate plain-language metadata summary."""
     lines = []
     lines.append("NetCDF File Summary\n")
     lines.append("[1] Global Attributes:")
@@ -33,7 +33,7 @@ def build_human_metadata(ds, var_name):
             rng = f"{coord.values[0]} … {coord.values[-1]} (n={coord.size})" if coord.size > 1 else f"{coord.values} (n=1)"
         except Exception:
             rng = f"n={coord.size}"
-        units = getattr(coord, 'attrs', {}).get('units', 'N/A')
+        units = getattr(coord, "attrs", {}).get("units", "N/A")
         lines.append(f"  - {cname} [units={units}]: {rng}")
     lines.append("\n[3] Variables:")
     for vname, dv in ds.data_vars.items():
@@ -46,6 +46,7 @@ def build_human_metadata(ds, var_name):
 
 
 def insert_date_header(file_path, date_string):
+    """Insert date header to SWAT CSV."""
     with open(file_path, "r") as f:
         content = f.read()
     with open(file_path, "w") as f:
@@ -58,17 +59,16 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
         ds = xr.open_dataset(data_path, chunks={"time": 365, "lat": 50, "lon": 50})
         var_name = list(ds.data_vars)[0]
         data_array = ds[var_name]
-        st.write("Shapefile bounds:", shape_file.total_bounds)
-        st.write("Dataset lat range:", float(data_array.lat.min()), "-", float(data_array.lat.max()))
-        st.write("Dataset lon range:", float(data_array.lon.min()), "-", float(data_array.lon.max()))
 
-        # Bounds
-        bounds = shape_file.bounds
+        # Ensure longitude is -180 to 180 if 0-360
+        if data_array.lon.max() > 180:
+            data_array = data_array.assign_coords(lon=(((data_array.lon + 180) % 360) - 180))
+
+        # Spatial bounds
+        bounds = shape_file.total_bounds  # [minx, miny, maxx, maxy]
         buffer = abs(float(data_array.lat[1] - data_array.lat[0])) * 2
-        min_lat = bounds.miny[0] - buffer
-        max_lat = bounds.maxy[0] + buffer
-        min_lon = bounds.minx[0] - buffer
-        max_lon = bounds.maxx[0] + buffer
+        min_lat, max_lat = bounds[1] - buffer, bounds[3] + buffer
+        min_lon, max_lon = bounds[0] - buffer, bounds[2] + buffer
 
         sliced_data = data_array.sel(
             lat=slice(min_lat, max_lat),
@@ -79,7 +79,6 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
         os.makedirs(output_dir, exist_ok=True)
         total_cells = sliced_data.shape[1] * sliced_data.shape[2]
         processed = 0
-
         station_details = []
         progress = st.progress(0)
 
@@ -90,7 +89,8 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
                 cell_poly = gpd.GeoDataFrame({'geometry': GeoSeries(Polygon([
                     (lon_c - 0.05, lat_c - 0.05), (lon_c + 0.05, lat_c - 0.05),
                     (lon_c + 0.05, lat_c + 0.05), (lon_c - 0.05, lat_c + 0.05)
-                ]))})
+                ]))}, crs="EPSG:4326")
+
                 try:
                     intersect = gpd.overlay(shape_file, cell_poly, how='intersection')
                     if len(intersect) > 0:
@@ -104,8 +104,9 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
                 processed += 1
                 progress.progress(processed / total_cells)
 
-        details_path = os.path.join(output_dir, f"{data_type}_station_list.csv")
-        pd.DataFrame(station_details, columns=["ID", "Lat", "Lon"]).to_csv(details_path, index=False)
+        if station_details:
+            details_path = os.path.join(output_dir, f"{data_type}_station_list.csv")
+            pd.DataFrame(station_details, columns=["ID", "Lat", "Lon"]).to_csv(details_path, index=False)
         progress.progress(1.0)
         return len(station_details)
 
@@ -115,6 +116,7 @@ def process_large_climate_data(data_path, shape_file, start_date, end_date, data
 
 
 def create_zip_file(directories, zip_filename):
+    """Bundle output directories into a single ZIP."""
     with zipfile.ZipFile(zip_filename, "w", zipfile.ZIP_DEFLATED) as zipf:
         for directory in directories:
             for root, _, files in os.walk(directory):
@@ -122,6 +124,7 @@ def create_zip_file(directories, zip_filename):
                     path = os.path.join(root, f)
                     arc = os.path.relpath(path, os.path.dirname(directory))
                     zipf.write(path, arc)
+
 
 # ------------------------------
 # Main App
@@ -155,24 +158,36 @@ def main():
                 if st.button("🚀 Generate SWAT-Compatible Weather Data", type="primary", use_container_width=True):
                     with tempfile.TemporaryDirectory() as temp_dir:
                         shp_path = None
+
+                        # --- GeoJSON ---
                         if shapefile_upload.name.endswith(".geojson"):
                             shp_path = os.path.join(temp_dir, "boundary.geojson")
                             with open(shp_path, "wb") as f:
                                 f.write(shapefile_upload.getbuffer())
                             shape_file = gpd.read_file(shp_path)
-                            if shape_file.crs is not None and shape_file.crs.to_epsg() != 4326:
-                                st.warning(f"Reprojecting shapefile from {shape_file.crs} to EPSG:4326 for compatibility.")
-                                shape_file = shape_file.to_crs(epsg=4326)
+
+                        # --- Shapefile ZIP ---
                         else:
-                            shp_dir = os.path.join(temp_dir, "shp")
+                            shp_dir = os.path.join(temp_dir, "shapefile")
                             os.makedirs(shp_dir, exist_ok=True)
-                            with zipfile.ZipFile(shapefile_upload, "r") as z:
-                                z.extractall(shp_dir)
-                            shp_files = [f for f in os.listdir(shp_dir) if f.endswith(".shp")]
+                            with zipfile.ZipFile(shapefile_upload, "r") as zip_ref:
+                                zip_ref.extractall(shp_dir)
+
+                            # recursive search for .shp
+                            shp_files = []
+                            for root, _, files in os.walk(shp_dir):
+                                for f in files:
+                                    if f.lower().endswith(".shp"):
+                                        shp_files.append(os.path.join(root, f))
                             if not shp_files:
-                                st.error("No .shp file found inside the ZIP.")
+                                st.error("No .shp file found inside the ZIP (even after scanning subfolders).")
                                 return
-                            shape_file = gpd.read_file(os.path.join(shp_dir, shp_files[0]))
+                            shape_file = gpd.read_file(shp_files[0])
+
+                        # ✅ Reproject if not in lat/lon
+                        if shape_file.crs is not None and shape_file.crs.to_epsg() != 4326:
+                            st.warning(f"Reprojecting shapefile from {shape_file.crs} to EPSG:4326 for compatibility.")
+                            shape_file = shape_file.to_crs(epsg=4326)
 
                         output_dirs = []
                         st.info("⏳ Processing datasets...")
@@ -193,7 +208,7 @@ def main():
                                                    mime="application/zip")
                             st.success("✅ SWAT data generation complete!")
                         else:
-                            st.warning("No data generated. Check inputs.")
+                            st.warning("No data generated. Check if shapefile overlaps dataset region.")
 
         with col2:
             st.header("ℹ️ About — SWAT Builder")
@@ -202,8 +217,8 @@ def main():
             climate files and converts them into **SWAT-compatible input tables**.
 
             **Steps:**
-            1. Upload a shapefile or GeoJSON of your study area.
-            2. Choose a date range of interest.
+            1. Upload a shapefile (ZIP) or GeoJSON boundary.
+            2. Select a date range of interest.
             3. Click *Generate SWAT-Compatible Weather Data*.
 
             **Output Structure:**
