@@ -123,6 +123,11 @@ def merge_tmin_tmax(tmin_dir, tmax_dir, output_dir, start_date):
     # Load station lists (for lat/lon)
     tmin_list = pd.read_csv(os.path.join(tmin_dir, "TMIN_station.csv"))
     tmax_list = pd.read_csv(os.path.join(tmax_dir, "TMAX_station.csv"))
+    if tmin_list.shape[1] == 4 and "Lat" not in tmin_list.columns:
+        tmin_list.columns = ["ID", "Name", "Lat", "Lon"]
+    if tmax_list.shape[1] == 4 and "Lat" not in tmax_list.columns:
+        tmax_list.columns = ["ID", "Name", "Lat", "Lon"]
+
     n = min(len(tmin_files), len(tmax_files))
     temp_stations = []
 
